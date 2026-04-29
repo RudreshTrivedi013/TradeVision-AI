@@ -193,10 +193,8 @@ docker-compose up --build
 
 ---
 
-## 📄 License
 
-MIT
 
----
+
 
 *Built as an end-to-end ML systems project demonstrating the full lifecycle: data → training → serving → monitoring.*
