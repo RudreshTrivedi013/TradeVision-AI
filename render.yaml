@@ -1,0 +1,26 @@
+# ============================================================
+# Render Blueprint — TradeVision AI
+# Docs: https://render.com/docs/blueprint-spec
+# ============================================================
+
+services:
+  # --- FastAPI Backend ---
+  - type: web
+    name: tradevision-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: uvicorn api.app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+    healthCheckPath: /health
+
+  # --- Streamlit Dashboard ---
+  - type: web
+    name: tradevision-dashboard
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: streamlit run dashboard/streamlit_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"

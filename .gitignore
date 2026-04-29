@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+venv/
+env/
+.venv/
+
+# Data (raw is regenerated; features & models are committed for deployment)
+data/raw/*.parquet
+data/metadata/*.json
+
+# NOTE: models/*.pkl and data/features/*.parquet are NOT gitignored
+# because Render builds from Git and needs them at startup.
+
+# Logs
+logs/*.jsonl
+logs/*.log
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+*.tar
+
+# Environment
+.env

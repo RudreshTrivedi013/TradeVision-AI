@@ -1,0 +1,29 @@
+# Don't send these to Docker build context
+__pycache__/
+*.py[cod]
+venv/
+env/
+.venv/
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# Runtime/generated data
+data/raw/
+data/metadata/
+logs/*.jsonl
+logs/*.log
+mlruns/
+mlartifacts/
+tmp/
+
+# Docs and tests not needed in production
+docs/
+tests/
+
+# OS files
+.DS_Store
+Thumbs.db
+*.tar
+.env
