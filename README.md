@@ -6,7 +6,7 @@
 
 ## 🏗️ System Architecture
 
-![Stock ML System Architecture](docs/architecture_diagram.png)
+
 
 | Stage | Input | Output |
 |---|---|---|
