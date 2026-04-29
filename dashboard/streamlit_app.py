@@ -174,20 +174,19 @@ def sidebar():
 # ===================================================================
 @st.cache_data(ttl=300)
 def fetch_live_data(ticker: str, period: str):
+    if not ticker:
+        return None, None, None
     try:
-        if not ticker:
-            return None, None, None
         stock = yf.Ticker(ticker)
         df = stock.history(period=period)
-        info = stock.info
+        info = stock.info if hasattr(stock, 'info') else {}
         news = stock.news if hasattr(stock, "news") else []
-        return df, info, news
-    except ValueError as e:
-        st.error(f"Invalid ticker name: {ticker}")
-        return None, None, None
-    except Exception as e:
-        st.error(f"Error fetching data for {ticker}: {e}")
-        return None, None, None
+        if df is not None and not df.empty:
+            return df, info, news
+        return None, info, news
+    except Exception:
+        # Yahoo Finance often blocks cloud server IPs — this is expected
+        return None, {}, []
 
 
 # ===================================================================
@@ -630,34 +629,50 @@ def main():
     st.markdown(f"# 📈 {ticker} Analysis")
 
     try:
-        # Fetch data
+        # Fetch live data (may fail on cloud servers due to Yahoo rate-limiting)
         with st.spinner(f"Fetching {ticker} data..."):
             df, info, news = fetch_live_data(ticker, period)
 
-        if df is None or df.empty:
-            st.warning(f"No data found for ticker: {ticker}. Please check the symbol and try again.")
-            return
+        has_live_data = df is not None and not df.empty
 
-        # Top metrics row
-        latest_close = df["Close"].iloc[-1]
-        prev_close = df["Close"].iloc[-2] if len(df) > 1 else latest_close
-        change = latest_close - prev_close
-        change_pct = (change / prev_close) * 100
+        if has_live_data:
+            # Top metrics row from live data
+            latest_close = df["Close"].iloc[-1]
+            prev_close = df["Close"].iloc[-2] if len(df) > 1 else latest_close
+            change = latest_close - prev_close
+            change_pct = (change / prev_close) * 100
 
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Close", f"${latest_close:.2f}", f"{change:+.2f} ({change_pct:+.1f}%)")
-        col2.metric("High", f"${df['High'].iloc[-1]:.2f}")
-        col3.metric("Low", f"${df['Low'].iloc[-1]:.2f}")
-        col4.metric("Volume", f"{df['Volume'].iloc[-1]:,.0f}")
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Close", f"${latest_close:.2f}", f"{change:+.2f} ({change_pct:+.1f}%)")
+            col2.metric("High", f"${df['High'].iloc[-1]:.2f}")
+            col3.metric("Low", f"${df['Low'].iloc[-1]:.2f}")
+            col4.metric("Volume", f"{df['Volume'].iloc[-1]:,.0f}")
 
-        # Compute indicators
-        df = compute_display_indicators(df, config)
+            # Compute indicators & show price chart
+            df = compute_display_indicators(df, config)
+            fig = plot_price_chart(df, ticker, show_indicators)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            # Fallback: use pre-computed feature data for metrics
+            st.warning("⚠️ Live market data unavailable (Yahoo Finance blocks cloud servers). "
+                       "Showing analysis from pre-computed data.")
+            df_feat = get_feature_data(ticker, config)
+            if df_feat is not None and "Close" in df_feat.columns:
+                latest_close = df_feat["Close"].iloc[-1]
+                prev_close = df_feat["Close"].iloc[-2] if len(df_feat) > 1 else latest_close
+                change = latest_close - prev_close
+                change_pct = (change / prev_close) * 100
 
-        # Price chart
-        fig = plot_price_chart(df, ticker, show_indicators)
-        st.plotly_chart(fig, use_container_width=True)
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Close", f"${latest_close:.2f}", f"{change:+.2f} ({change_pct:+.1f}%)")
+                col2.metric("High", f"${df_feat['High'].iloc[-1]:.2f}")
+                col3.metric("Low", f"${df_feat['Low'].iloc[-1]:.2f}")
+                col4.metric("Volume", f"{df_feat['Volume'].iloc[-1]:,.0f}")
+            elif df_feat is None:
+                st.error(f"No data available for {ticker}. Try one of the default tickers: AAPL, MSFT, GOOGL, TSLA, AMZN")
+                return
 
-        # Tabs for different sections
+        # Tabs — always show (work with pre-computed data)
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "🤖 Predictions", "📊 Fundamentals", "🔍 Anomalies",
             "📰 Sentiment", "📡 Monitoring"
@@ -667,13 +682,19 @@ def main():
             prediction_panel(ticker, config, models)
 
         with tab2:
-            fundamentals_panel(info)
+            if info:
+                fundamentals_panel(info)
+            else:
+                st.info("📊 Fundamentals unavailable — Yahoo Finance data blocked on cloud servers.")
 
         with tab3:
             anomaly_panel(ticker, config, models)
 
         with tab4:
-            sentiment_panel(news)
+            if news:
+                sentiment_panel(news)
+            else:
+                st.info("📰 Live news unavailable on cloud deployment. Sentiment uses pre-computed scores.")
 
         with tab5:
             monitoring_panel(ticker)
