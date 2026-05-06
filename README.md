@@ -11,10 +11,6 @@
 
 ## 🏗️ System Architecture
 
-<p align="center">
-  <img src="docs/architecture_diagram.png" alt="System Architecture" width="800">
-</p>
-
 | Stage | Input | Output |
 |---|---|---|
 | **Data Ingestion** | Ticker symbol + date range | Versioned raw OHLCV parquet |
