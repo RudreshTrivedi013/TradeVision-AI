@@ -2,11 +2,18 @@
 
 > A production-grade ML system that fetches daily stock data, engineers technical & sentiment features, trains direction-prediction models, serves predictions via FastAPI, and monitors for data/concept drift — all orchestrated through a single config file.
 
+<p align="center">
+  <img src="screenshots/dashboard_overview.png" alt="TradeVision AI Dashboard" width="900">
+</p>
+
+
 ---
 
 ## 🏗️ System Architecture
 
-
+<p align="center">
+  <img src="docs/architecture_diagram.png" alt="System Architecture" width="800">
+</p>
 
 | Stage | Input | Output |
 |---|---|---|
@@ -83,6 +90,11 @@ docker-compose up --build
 
 ## 🔌 API Endpoints
 
+<p align="center">
+  <img src="screenshots/api_swagger.png" alt="API Documentation" width="800">
+</p>
+
+
 | Method | Endpoint | Description |
 |---|---|---|
 | `POST` | `/analyze` | Full pipeline: OHLCV + indicators + sentiment + anomaly + prediction |
@@ -124,6 +136,11 @@ curl -X POST http://localhost:8000/analyze \
 
 ## 🧪 Models & Evaluation
 
+<p align="center">
+  <img src="screenshots/model_predictions.png" alt="Model Predictions" width="800">
+</p>
+
+
 | Model | Task | Training Accuracy | F1 Score | Status |
 |---|---|---|---|---|
 | **Naive Baseline** | Always predict UP | 51.01% | 0.6756 | Reference |
@@ -153,6 +170,11 @@ All training runs are versioned and logged in MLflow locally.
 ---
 
 ## 🔄 Drift Detection & Monitoring
+
+<p align="center">
+  <img src="screenshots/anomaly_detection.png" alt="Anomaly Detection" width="800">
+</p>
+
 
 The system monitors for three types of model decay:
 1. **Feature drift**: Kolmogorov-Smirnov test (30-day window).
