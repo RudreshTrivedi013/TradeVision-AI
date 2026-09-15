@@ -169,6 +169,7 @@ XGBoost catches **61% of down days** (vs 0% for the baseline). Whether that asym
 The strong outcome here isn't a model that predicts stock direction (that's hard and the numbers reflect it). It's the **engineering rigor**:
 
 - Leak-free feature pipeline with explicit chronological splitting and a documented audit trail
+- **Automated CI/CD Guards**: A robust `pytest` suite running on GitHub Actions that strictly enforces chronological splitting (no time-travel) and verifies feature strictness (no sentiment data leakage) on every push.
 - Three models evaluated and compared systematically against a meaningful baseline
 - Confusion matrix analysis surfacing the DOWN-day asymmetry that blended accuracy hides
 - Drift detection, rolling accuracy monitoring, and retrain triggers built in from day one
