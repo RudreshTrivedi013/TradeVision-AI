@@ -256,48 +256,63 @@ def fetch_live_data(ticker: str, period: str):
 # ===================================================================
 # Fetch and Process Feature Data (Lazy Loading)
 # ===================================================================
-def get_feature_data(ticker, config):
+@st.cache_data(ttl=3600, show_spinner=False)
+def _compute_feature_data(ticker: str, config: dict):
     """
-    Load feature data from disk OR compute it on the fly if missing.
-    Ensures that custom tickers work automatically.
+    Cached computation: runs the full pipeline ONCE per ticker per hour.
+    Separated from get_feature_data() so @st.cache_data can be applied
+    (st.spinner cannot be used inside a cached function).
     """
     feature_file = PROJECT_ROOT / config["data"]["features_dir"] / f"{ticker}_features.parquet"
-
     if feature_file.exists():
-        return pd.read_parquet(feature_file)
+        return pd.read_parquet(feature_file), None  # (df, error_msg)
 
-    with st.spinner(f"🚀 Running pipeline for {ticker}... (First time only)"):
-        try:
-            # 1. Fetch raw
-            pipeline = DataPipeline(config)
-            df_raw = pipeline.fetch(
-                ticker,
-                config["data"]["default_start_date"],
-                config["data"]["default_end_date"]
-            )
-            if df_raw is None or df_raw.empty:
-                return None
+    try:
+        pipeline = DataPipeline(config)
+        df_raw = pipeline.fetch(
+            ticker,
+            config["data"]["default_start_date"],
+            config["data"]["default_end_date"]
+        )
+        if df_raw is None or df_raw.empty:
+            return None, f"No data returned for {ticker}."
 
-            # 2. Clean & Preprocess
-            df_raw = pipeline.clean(df_raw, ticker)
-            df_raw = pipeline.preprocess(df_raw, ticker)
+        df_raw = pipeline.clean(df_raw, ticker)
+        df_raw = pipeline.preprocess(df_raw, ticker)
 
-            # 3. Engineer features
-            feature_store = FeatureStore(config)
-            df_feat = feature_store.engineer_features(df_raw, ticker)
+        feature_store = FeatureStore(config)
+        df_feat = feature_store.engineer_features(df_raw, ticker)
+        feature_store.save_features(df_feat, ticker)
+        return df_feat, None
+    except Exception as e:
+        return None, str(e)
 
-            # 4. Save to feature store (so next time is instant)
-            feature_store.save_features(df_feat, ticker)
 
-            return df_feat
-        except Exception as e:
-            if "TWELVEDATA_API_KEY" in str(e):
-                if not st.session_state.get("api_warned"):
-                    st.warning("⚠️ **TWELVEDATA_API_KEY missing.** Cannot generate historical features for new tickers on-the-fly. Please select a pre-computed ticker or set your API key.")
-                    st.session_state.api_warned = True
-            else:
-                st.error(f"Failed to process {ticker}: {e}")
-            return None
+def get_feature_data(ticker: str, config: dict):
+    """
+    UI wrapper around _compute_feature_data().
+    Shows a spinner while computing and handles error display.
+    The cached inner function guarantees the pipeline runs only ONCE per
+    ticker (even though multiple panels call get_feature_data), preventing
+    simultaneous duplicate API calls that would hit TwelveData rate limits.
+    """
+    with st.spinner(f"🚀 Running pipeline for {ticker}… (first time only)"):
+        df, err = _compute_feature_data(ticker, config)
+
+    if err is not None:
+        if "TWELVEDATA_API_KEY" in err:
+            if not st.session_state.get("api_warned"):
+                st.warning(
+                    "⚠️ **TWELVEDATA_API_KEY missing.** "
+                    "Cannot generate features for new tickers on-the-fly. "
+                    "Please select a default ticker or set your API key."
+                )
+                st.session_state.api_warned = True
+        else:
+            if not st.session_state.get(f"err_warned_{ticker}"):
+                st.error(f"Failed to process {ticker}: {err}")
+                st.session_state[f"err_warned_{ticker}"] = True
+    return df
 def compute_display_indicators(df: pd.DataFrame, config: dict):
     cfg = config["features"]
 
