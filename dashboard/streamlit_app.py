@@ -14,6 +14,9 @@ from plotly.subplots import make_subplots
 import streamlit as st
 import yaml
 import yfinance as yf
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Add project root to path for imports
 PROJECT_ROOT = Path(__file__).resolve().parent.parent

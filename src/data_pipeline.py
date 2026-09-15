@@ -12,6 +12,9 @@ import numpy as np
 import pandas as pd
 import yaml
 from twelvedata import TDClient
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ---------------------------------------------------------------------------
 # Logging setup
