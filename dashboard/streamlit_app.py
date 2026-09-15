@@ -16,7 +16,7 @@ import yaml
 import yfinance as yf
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 # Add project root to path for imports
 PROJECT_ROOT = Path(__file__).resolve().parent.parent

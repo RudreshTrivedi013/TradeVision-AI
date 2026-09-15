@@ -14,7 +14,7 @@ import yaml
 from twelvedata import TDClient
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 # ---------------------------------------------------------------------------
 # Logging setup
