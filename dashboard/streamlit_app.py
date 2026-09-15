@@ -288,7 +288,12 @@ def get_feature_data(ticker, config):
 
             return df_feat
         except Exception as e:
-            st.error(f"Failed to process {ticker}: {e}")
+            if "TWELVEDATA_API_KEY" in str(e):
+                if not st.session_state.get("api_warned"):
+                    st.warning("⚠️ **TWELVEDATA_API_KEY missing.** Cannot generate historical features for new tickers on-the-fly. Please select a pre-computed ticker or set your API key.")
+                    st.session_state.api_warned = True
+            else:
+                st.error(f"Failed to process {ticker}: {e}")
             return None
 def compute_display_indicators(df: pd.DataFrame, config: dict):
     cfg = config["features"]

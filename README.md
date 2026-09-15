@@ -141,8 +141,8 @@ Rather than forcing a single global model across all assets, the pipeline trains
 | **AAPL** | XGBoost | 49.0% | 0.72 | 0.33 |
 | **MSFT** | Random Forest | 51.7% | 0.52 | 0.50 |
 | **TSLA** | Logistic Regression | 47.5% | 0.48 | 0.52 |
-| **JPM** | XGBoost | 53.2% | 0.65 | 0.44 |
-| **SPY** | Random Forest | 52.4% | 0.55 | 0.50 |
+| **AMZN** | XGBoost | 53.2% | 0.65 | 0.44 |
+| **GOOGL** | Random Forest | 52.4% | 0.55 | 0.50 |
 
 > **Note on the split:** `train_test_split(..., shuffle=False)` with an explicit `sort_index()` before the split ensures every training row has a date strictly before every test row. No lookahead leakage. Isolation Forest is used separately across all tickers for anomaly detection.
 
