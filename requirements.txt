@@ -14,8 +14,8 @@ nltk==3.9.1
 vaderSentiment==3.3.2
 
 # --- ML / Training ---
-scikit-learn==1.5.1
-xgboost==2.0.3
+scikit-learn==1.7.1
+xgboost==3.2.0
 mlflow==2.14.1
 
 # --- API ---
