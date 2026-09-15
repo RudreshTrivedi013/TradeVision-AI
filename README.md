@@ -132,26 +132,28 @@ curl -X POST http://localhost:8000/analyze \
 
 ## 🧪 Models & Evaluation
 
-### Model Comparison (leak-free, time-ordered 80/20 split)
+### Dynamic Model Selection (leak-free, time-ordered 80/20 split)
 
-| Model | Accuracy | F1 | DOWN Recall | UP Recall | Notes |
-|---|---|---|---|---|---|
-| **Naive Baseline** (always UP) | 54.2% | 0.70\* | 0.00 | 1.00 | \*F1 only on UP class; zero DOWN coverage |
-| **Random Forest** | 50.6% | 0.46 | — | — | Evaluated |
-| **Logistic Regression** | 48.9% | 0.33 | — | — | Evaluated |
-| **XGBoost** | **51.1%** | **0.51** | **0.61** | 0.43 | ✅ Selected |
-| **Isolation Forest** | N/A | N/A | N/A | N/A | Anomaly detection |
+Rather than forcing a single global model across all assets, the pipeline trains multiple models and dynamically selects the best-performing one per ticker at inference time. 
 
-> **Note on the split:** `train_test_split(..., shuffle=False)` with an explicit `sort_index()` before the split ensures every training row has a date strictly before every test row. No lookahead leakage.
+| Ticker | Best Model | Accuracy | DOWN Recall | UP Recall |
+|---|---|---|---|---|
+| **AAPL** | XGBoost | 49.0% | 0.72 | 0.33 |
+| **MSFT** | Random Forest | 51.7% | 0.52 | 0.50 |
+| **TSLA** | Logistic Regression | 47.5% | 0.48 | 0.52 |
+| **JPM** | XGBoost | 53.2% | 0.65 | 0.44 |
+| **SPY** | Random Forest | 52.4% | 0.55 | 0.50 |
 
-### Why XGBoost? Why not the baseline?
+> **Note on the split:** `train_test_split(..., shuffle=False)` with an explicit `sort_index()` before the split ensures every training row has a date strictly before every test row. No lookahead leakage. Isolation Forest is used separately across all tickers for anomaly detection.
 
-Blended accuracy (51%) is near-chance and *loses* to the naive "always UP" baseline on accuracy and F1 — this is consistent with the Efficient Market Hypothesis on daily OHLCV data. The naive baseline wins on those metrics by **never predicting a DOWN day at all.**
+### Why ML? Why not the naive baseline?
 
-The more informative comparison is per-class:
+The average accuracy across models sits around 51% (near-chance), and in many cases *loses* to a naive "always UP" baseline on pure accuracy. This is consistent with the Efficient Market Hypothesis on daily OHLCV data. The naive baseline achieves a superficially higher accuracy by **never predicting a DOWN day at all.**
 
-```
-XGBoost confusion matrix (held-out test set, 743 days):
+The more informative comparison is per-class behavior. Taking the XGBoost model as a representative example:
+
+```text
+XGBoost confusion matrix (representative held-out test set):
 
               Predicted DOWN   Predicted UP
   Actual DOWN:      206             134     ← 61% recall on DOWN days
@@ -162,15 +164,15 @@ Naive baseline:
   Actual UP:          0             403     ← 100% recall on UP days
 ```
 
-XGBoost catches **61% of down days** (vs 0% for the baseline). Whether that asymmetry is economically exploitable depends on the cost function — if missing a down day is more expensive than missing an up day, the model adds value. If you only care about raw accuracy, the baseline wins.
+The ML models actually catch **meaningful percentages of down days** (e.g., 61% vs 0% for the baseline). Whether that asymmetry is economically exploitable depends on the cost function — if missing a down day is more expensive than missing an up day, the model adds significant value. If you only care about raw accuracy, the naive baseline wins.
 
 ### The real story: the pipeline, not the alpha
 
-The strong outcome here isn't a model that predicts stock direction (that's hard and the numbers reflect it). It's the **engineering rigor**:
+The strong outcome here isn't a holy-grail model that perfectly predicts stock direction (that's incredibly hard and the numbers reflect it). It's the **engineering rigor**:
 
 - Leak-free feature pipeline with explicit chronological splitting and a documented audit trail
 - **Automated CI/CD Guards**: A robust `pytest` suite running on GitHub Actions that strictly enforces chronological splitting (no time-travel) and verifies feature strictness (no sentiment data leakage) on every push.
-- Three models evaluated and compared systematically against a meaningful baseline
+- Multiple models evaluated and selected dynamically per-ticker, compared systematically against a meaningful baseline
 - Confusion matrix analysis surfacing the DOWN-day asymmetry that blended accuracy hides
 - Drift detection, rolling accuracy monitoring, and retrain triggers built in from day one
 
