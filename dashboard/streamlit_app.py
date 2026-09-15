@@ -195,6 +195,13 @@ def sidebar():
         "**Model:** Uses trained classifiers to predict next-day direction."
     )
 
+    api_key = os.environ.get("TWELVEDATA_API_KEY", "").strip().strip('"').strip("'")
+    if api_key:
+        api_status = f"✅ Loaded (len: {len(api_key)})"
+    else:
+        api_status = "❌ EMPTY"
+    st.sidebar.caption(f"🔧 **API Key:** {api_status}")
+
     return ticker, period, show_indicators
 
 
@@ -297,7 +304,7 @@ def get_feature_data(ticker: str, config: dict):
     Reads the API key here (in the live Streamlit context) and passes it
     explicitly to the cached function so it's always available.
     """
-    api_key = os.environ.get("TWELVEDATA_API_KEY", "").strip('"').strip("'")
+    api_key = os.environ.get("TWELVEDATA_API_KEY", "").strip().strip('"').strip("'")
     
     try:
         with st.spinner(f"🚀 Running pipeline for {ticker}… (first time only)"):
@@ -314,9 +321,7 @@ def get_feature_data(ticker: str, config: dict):
                 )
                 st.session_state.api_warned = True
         else:
-            if not st.session_state.get(f"err_warned_{ticker}"):
-                st.error(f"Failed to process {ticker}: {err}")
-                st.session_state[f"err_warned_{ticker}"] = True
+            st.error(f"Failed to process {ticker}: {err}")
         return None
 def compute_display_indicators(df: pd.DataFrame, config: dict):
     cfg = config["features"]
