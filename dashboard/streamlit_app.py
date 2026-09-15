@@ -265,33 +265,30 @@ def _compute_feature_data(ticker: str, config: dict, api_key: str):
     """
     feature_file = PROJECT_ROOT / config["data"]["features_dir"] / f"{ticker}_features.parquet"
     if feature_file.exists():
-        return pd.read_parquet(feature_file), None  # (df, error_msg)
+        return pd.read_parquet(feature_file)
 
     if not api_key:
-        return None, "TWELVEDATA_API_KEY is not set."
+        raise EnvironmentError("TWELVEDATA_API_KEY is not set.")
 
     # Explicitly inject the key so DataPipeline.__init__ always finds it
     os.environ["TWELVEDATA_API_KEY"] = api_key
 
-    try:
-        pipeline = DataPipeline(config)
-        df_raw = pipeline.fetch(
-            ticker,
-            config["data"]["default_start_date"],
-            config["data"]["default_end_date"]
-        )
-        if df_raw is None or df_raw.empty:
-            return None, f"No data returned for {ticker}."
+    pipeline = DataPipeline(config)
+    df_raw = pipeline.fetch(
+        ticker,
+        config["data"]["default_start_date"],
+        config["data"]["default_end_date"]
+    )
+    if df_raw is None or df_raw.empty:
+        raise ValueError(f"No data returned for {ticker}.")
 
-        df_raw = pipeline.clean(df_raw, ticker)
-        df_raw = pipeline.preprocess(df_raw, ticker)
+    df_raw = pipeline.clean(df_raw, ticker)
+    df_raw = pipeline.preprocess(df_raw, ticker)
 
-        feature_store = FeatureStore(config)
-        df_feat = feature_store.engineer_features(df_raw, ticker)
-        feature_store.save_features(df_feat, ticker)
-        return df_feat, None
-    except Exception as e:
-        return None, str(e)
+    feature_store = FeatureStore(config)
+    df_feat = feature_store.engineer_features(df_raw, ticker)
+    feature_store.save_features(df_feat, ticker)
+    return df_feat
 
 
 def get_feature_data(ticker: str, config: dict):
@@ -300,24 +297,27 @@ def get_feature_data(ticker: str, config: dict):
     Reads the API key here (in the live Streamlit context) and passes it
     explicitly to the cached function so it's always available.
     """
-    api_key = os.environ.get("TWELVEDATA_API_KEY", "")
-    with st.spinner(f"🚀 Running pipeline for {ticker}… (first time only)"):
-        df, err = _compute_feature_data(ticker, config, api_key)
-
-    if err is not None:
-        if "TWELVEDATA_API_KEY" in err:
+    api_key = os.environ.get("TWELVEDATA_API_KEY", "").strip('"').strip("'")
+    
+    try:
+        with st.spinner(f"🚀 Running pipeline for {ticker}… (first time only)"):
+            df = _compute_feature_data(ticker, config, api_key)
+            return df
+    except Exception as e:
+        err = str(e)
+        if "TWELVEDATA_API_KEY" in err or "401" in err:
             if not st.session_state.get("api_warned"):
                 st.warning(
-                    "⚠️ **TWELVEDATA_API_KEY missing.** "
+                    "⚠️ **TWELVEDATA_API_KEY missing or invalid.** "
                     "Cannot generate features for new tickers on-the-fly. "
-                    "Please select a default ticker or set your API key."
+                    "Please select a default ticker or check your API key."
                 )
                 st.session_state.api_warned = True
         else:
             if not st.session_state.get(f"err_warned_{ticker}"):
                 st.error(f"Failed to process {ticker}: {err}")
                 st.session_state[f"err_warned_{ticker}"] = True
-    return df
+        return None
 def compute_display_indicators(df: pd.DataFrame, config: dict):
     cfg = config["features"]
 
