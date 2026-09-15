@@ -257,15 +257,21 @@ def fetch_live_data(ticker: str, period: str):
 # Fetch and Process Feature Data (Lazy Loading)
 # ===================================================================
 @st.cache_data(ttl=3600, show_spinner=False)
-def _compute_feature_data(ticker: str, config: dict):
+def _compute_feature_data(ticker: str, config: dict, api_key: str):
     """
     Cached computation: runs the full pipeline ONCE per ticker per hour.
-    Separated from get_feature_data() so @st.cache_data can be applied
-    (st.spinner cannot be used inside a cached function).
+    api_key is passed explicitly so it is always available inside the
+    cached function context (os.environ may not propagate into cached calls).
     """
     feature_file = PROJECT_ROOT / config["data"]["features_dir"] / f"{ticker}_features.parquet"
     if feature_file.exists():
         return pd.read_parquet(feature_file), None  # (df, error_msg)
+
+    if not api_key:
+        return None, "TWELVEDATA_API_KEY is not set."
+
+    # Explicitly inject the key so DataPipeline.__init__ always finds it
+    os.environ["TWELVEDATA_API_KEY"] = api_key
 
     try:
         pipeline = DataPipeline(config)
@@ -291,13 +297,12 @@ def _compute_feature_data(ticker: str, config: dict):
 def get_feature_data(ticker: str, config: dict):
     """
     UI wrapper around _compute_feature_data().
-    Shows a spinner while computing and handles error display.
-    The cached inner function guarantees the pipeline runs only ONCE per
-    ticker (even though multiple panels call get_feature_data), preventing
-    simultaneous duplicate API calls that would hit TwelveData rate limits.
+    Reads the API key here (in the live Streamlit context) and passes it
+    explicitly to the cached function so it's always available.
     """
+    api_key = os.environ.get("TWELVEDATA_API_KEY", "")
     with st.spinner(f"🚀 Running pipeline for {ticker}… (first time only)"):
-        df, err = _compute_feature_data(ticker, config)
+        df, err = _compute_feature_data(ticker, config, api_key)
 
     if err is not None:
         if "TWELVEDATA_API_KEY" in err:
