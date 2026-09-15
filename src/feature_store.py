@@ -74,7 +74,7 @@ class FeatureStore:
         feat = self._add_volume_ratio(feat)
 
         # --- Sentiment ---
-        feat = self._add_sentiment(feat, ticker)
+        # Sentiment feature removed due to data leakage (snapshot applied historically).
 
         # --- Lag Features ---
         feat = self._add_lag_features(feat)
@@ -190,59 +190,7 @@ class FeatureStore:
         df["volume_ratio"] = df["Volume"] / rolling_mean
         return df
 
-    # ===================================================================
-    # SENTIMENT
-    # ===================================================================
 
-    def _add_sentiment(self, df: pd.DataFrame, ticker: str) -> pd.DataFrame:
-        """
-        Daily sentiment score from yfinance news headlines + VADER.
-
-        If no news available for a day, fills with neutral (0.0).
-        """
-        logger.info(f"    Computing sentiment for {ticker} ...")
-
-        try:
-            from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-            import yfinance as yf
-
-            analyzer = SentimentIntensityAnalyzer()
-            stock = yf.Ticker(ticker)
-
-            # Get news headlines
-            news = stock.news if hasattr(stock, "news") else []
-
-            if news and len(news) > 0:
-                # Compute average sentiment from available headlines
-                scores = []
-                for article in news:
-                    content = article.get("content", article)
-                    title = content.get("title", "")
-                    if title:
-                        vs = analyzer.polarity_scores(title)
-                        scores.append(vs["compound"])
-
-                avg_sentiment = np.mean(scores) if scores else 0.0
-                logger.info(
-                    f"    Found {len(scores)} headlines, avg sentiment: {avg_sentiment:.3f}"
-                )
-            else:
-                avg_sentiment = 0.0
-                logger.info("    No news found, using neutral sentiment")
-
-            # Apply same sentiment to all rows (news is a snapshot, not historical)
-            df["sentiment_score"] = avg_sentiment
-
-        except ImportError:
-            logger.warning(
-                "    vaderSentiment not installed — filling sentiment with 0.0"
-            )
-            df["sentiment_score"] = self.cfg["sentiment_neutral_fill"]
-        except Exception as e:
-            logger.warning(f"    Sentiment computation failed: {e} — filling with 0.0")
-            df["sentiment_score"] = self.cfg["sentiment_neutral_fill"]
-
-        return df
 
     # ===================================================================
     # LAG FEATURES

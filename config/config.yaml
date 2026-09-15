@@ -35,7 +35,9 @@ features:
 
 # --- Model Training ---
 training:
-  test_size: 0.2
+  test_size: 0.20   # final held-out test set (never seen during tuning)
+  val_size: 0.20    # fraction of train_val used as validation (for HP tuning)
+                    # result: 64% train / 16% val / 20% test (time-ordered)
   random_seed: 42
   models_dir: "models"
   target_column: "target_direction"  # 1 = up, 0 = down (next-day close vs today close)
@@ -87,3 +89,10 @@ mlflow:
 dashboard:
   title: "TradeVision AI Dashboard"
   default_ticker: "AAPL"
+
+# --- TwelveData API ---
+twelvedata:
+  cache_dir: "data/td_cache"      # diskcache directory for OHLCV responses
+  cache_ttl_seconds: 86400        # 24-hour TTL — avoids re-fetching intraday
+  interval: "1day"
+  outputsize: 5000                # max bars per request

@@ -7,10 +7,11 @@ import sys
 from datetime import datetime, date
 from pathlib import Path
 
+import diskcache as dc
 import numpy as np
 import pandas as pd
 import yaml
-import yfinance as yf
+from twelvedata import TDClient
 
 # ---------------------------------------------------------------------------
 # Logging setup
@@ -30,11 +31,13 @@ class DataPipeline:
     """
     Reusable pipeline for any ticker: fetch → validate → clean → preprocess → log.
 
+    Data source: TwelveData API (with diskcache to preserve API credits).
     All tuneable numbers are read from config.yaml (Rule 2).
     """
 
     def __init__(self, config: dict):
         self.cfg = config["data"]
+        self.td_cfg = config.get("twelvedata", {})
         self.raw_dir = Path(self.cfg["raw_data_dir"])
         self.metadata_dir = Path(self.cfg["metadata_dir"])
 
@@ -47,12 +50,32 @@ class DataPipeline:
         self.max_missing_pct = self.cfg["max_missing_pct"]
         self.volume_cap_pct = self.cfg["volume_outlier_cap_percentile"]
 
+        # --- TwelveData client ---
+        api_key = os.environ.get("TWELVEDATA_API_KEY", "")
+        if not api_key:
+            raise EnvironmentError(
+                "TWELVEDATA_API_KEY environment variable is not set. "
+                "Set it with: $env:TWELVEDATA_API_KEY = '<your-key>'"
+            )
+        self._td = TDClient(apikey=api_key)
+
+        # --- Disk cache ---
+        cache_dir = Path(self.td_cfg.get("cache_dir", "data/td_cache"))
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        self._cache = dc.Cache(str(cache_dir))
+        self._cache_ttl = int(self.td_cfg.get("cache_ttl_seconds", 86400))
+
+        # TwelveData request params
+        self._interval = self.td_cfg.get("interval", "1day")
+        self._outputsize = int(self.td_cfg.get("outputsize", 5000))
+
     # ---------------------------------------------------------------
-    # 1. FETCH — Download OHLCV data via yfinance
+    # 1. FETCH — Download OHLCV data via TwelveData (with cache)
     # ---------------------------------------------------------------
     def fetch(self, ticker: str, start: str, end: str) -> pd.DataFrame:
         """
-        Download OHLCV data for a single ticker.
+        Download OHLCV data for a single ticker via TwelveData API.
+        Results are cached on disk for `cache_ttl_seconds` to preserve credits.
 
         Args:
             ticker: Stock symbol (e.g. "AAPL")
@@ -62,18 +85,66 @@ class DataPipeline:
         Returns:
             Raw DataFrame with columns: Open, High, Low, Close, Adj Close, Volume
         """
-        logger.info(f"Fetching {ticker} from {start} to {end} ...")
-        df = yf.download(ticker, start=start, end=end, progress=False)
+        cache_key = f"ohlcv|{ticker}|{start}|{end}|{self._interval}"
 
-        if df.empty:
+        # --- Check cache first ---
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            logger.info(f"  ✓ Cache hit for {ticker} ({start} → {end})")
+            return cached
+
+        logger.info(f"Fetching {ticker} from {start} to {end} via TwelveData ...")
+
+        try:
+            ts = self._td.time_series(
+                symbol=ticker,
+                interval=self._interval,
+                start_date=start,
+                end_date=end,
+                outputsize=self._outputsize,
+                timezone="America/New_York",
+            )
+            df = ts.as_pandas()
+        except Exception as e:
+            raise ValueError(
+                f"TwelveData fetch failed for {ticker} ({start} → {end}): {e}"
+            )
+
+        if df is None or df.empty:
             raise ValueError(f"No data returned for {ticker} ({start} → {end})")
 
-        # yfinance sometimes returns MultiIndex columns for single ticker
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.droplevel("Ticker")
-
+        # --- Normalize columns ---
+        # TwelveData returns: datetime (index), open, high, low, close, volume
         df.index.name = "Date"
+        df.index = pd.to_datetime(df.index)
+
+        # Sort ascending (TwelveData returns newest-first by default)
+        df = df.sort_index(ascending=True)
+
+        # Rename to match downstream schema
+        col_map = {
+            "open": "Open",
+            "high": "High",
+            "low": "Low",
+            "close": "Close",
+            "volume": "Volume",
+        }
+        df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
+
+        # TwelveData returns adjusted prices by default — mirror as Adj Close
+        if "Close" in df.columns and "Adj Close" not in df.columns:
+            df["Adj Close"] = df["Close"]
+
+        # Cast numeric columns
+        for col in ["Open", "High", "Low", "Close", "Adj Close", "Volume"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+
         logger.info(f"  ✓ Fetched {len(df)} rows for {ticker}")
+
+        # --- Store in cache ---
+        self._cache.set(cache_key, df, expire=self._cache_ttl)
+
         return df
 
     # ---------------------------------------------------------------
@@ -241,6 +312,7 @@ class DataPipeline:
             "dtypes": {col: str(dtype) for col, dtype in df.dtypes.items()},
             "validation_issues": validation_report.get("issues", []),
             "run_timestamp": datetime.now().isoformat(),
+            "data_source": "TwelveData",
         }
 
         filename = f"{ticker}_{date.today().isoformat()}_metadata.json"

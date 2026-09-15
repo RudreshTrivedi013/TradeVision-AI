@@ -1,9 +1,9 @@
 """
-FastAPI App — Stage 6: REST API with 3 endpoints + Pydantic validation.
+FastAPI App — REST API with 3 endpoints + Pydantic validation.
 
 Endpoints:
-    POST /analyze         — Full pipeline analysis for a ticker
-    GET  /fundamentals/{ticker} — Live fundamentals from yfinance
+    POST /analyze               — Full pipeline analysis for a ticker
+    GET  /fundamentals/{ticker} — Live fundamentals from TwelveData
     GET  /anomalies/{ticker}    — Isolation Forest anomaly detection
 
 Usage:
@@ -23,7 +23,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import yaml
-import yfinance as yf
+from twelvedata import TDClient
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
@@ -61,6 +61,10 @@ for name in ["RandomForest", "XGBoost", "LogisticRegression", "isolation_forest"
 
 FEATURE_STORE = FeatureStore(CONFIG)
 PIPELINE = DataPipeline(CONFIG)
+
+# TwelveData client for fundamentals / statistics
+_TD_API_KEY = os.environ.get("TWELVEDATA_API_KEY", "")
+_TD_CLIENT: Optional[TDClient] = TDClient(apikey=_TD_API_KEY) if _TD_API_KEY else None
 
 LOG_PATH = PROJECT_ROOT / CONFIG["monitoring"]["log_file"]
 LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -115,6 +119,8 @@ class Fundamentals(BaseModel):
 
 
 class AnalyzeResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}  # allow 'model_used' field name
+
     ticker: str
     direction_prediction: str
     confidence: float
@@ -260,31 +266,8 @@ def analyze(request: AnalyzeRequest):
         volatility_20d=round(float(last_row.get("volatility_20d", 0)), 6),
     )
 
-    # --- Fundamentals ---
-    try:
-        stock = yf.Ticker(ticker)
-        info = stock.info
-        mc = info.get("marketCap", 0)
-        if mc and mc >= 1e12:
-            mc_str = f"${mc/1e12:.2f}T"
-        elif mc and mc >= 1e9:
-            mc_str = f"${mc/1e9:.2f}B"
-        elif mc:
-            mc_str = f"${mc/1e6:.0f}M"
-        else:
-            mc_str = "N/A"
-
-        funds = Fundamentals(
-            pe_ratio=info.get("trailingPE"),
-            eps=info.get("trailingEps"),
-            market_cap=mc_str,
-            profit_margin=info.get("profitMargins"),
-            revenue_growth=info.get("revenueGrowth"),
-            fifty_two_week_high=info.get("fiftyTwoWeekHigh"),
-            fifty_two_week_low=info.get("fiftyTwoWeekLow"),
-        )
-    except Exception:
-        funds = Fundamentals()
+    # --- Fundamentals (TwelveData statistics) ---
+    funds = _fetch_fundamentals(ticker)
 
     # --- Sentiment ---
     sentiment = float(last_row.get("sentiment_score", 0))
@@ -313,43 +296,84 @@ def analyze(request: AnalyzeRequest):
 
 
 # ===================================================================
+# Helper: fetch fundamentals via TwelveData statistics endpoint
+# ===================================================================
+def _fetch_fundamentals(ticker: str) -> "Fundamentals":
+    """
+    Fetch key fundamentals from TwelveData /statistics endpoint.
+    Returns an empty Fundamentals() on any failure (free-tier may not include this).
+
+    Actual TwelveData statistics JSON structure (verified):
+      valuations_metrics.trailing_pe / market_capitalization
+      financials.profit_margin
+      financials.income_statement.diluted_eps_ttm / quarterly_revenue_growth
+      stock_price_summary.fifty_two_week_high / fifty_two_week_low
+    """
+    if _TD_CLIENT is None:
+        logger.warning("TwelveData client not initialised — TWELVEDATA_API_KEY missing")
+        return Fundamentals()
+
+    try:
+        stats = _TD_CLIENT.get_statistics(symbol=ticker).as_json()
+
+        # --- Valuation metrics ---
+        valuation = stats.get("valuations_metrics", {})
+        pe_ratio = _safe_float(valuation.get("trailing_pe"))
+        mc = _safe_float(valuation.get("market_capitalization"))
+        if mc and mc >= 1e12:
+            mc_str = f"${mc/1e12:.2f}T"
+        elif mc and mc >= 1e9:
+            mc_str = f"${mc/1e9:.2f}B"
+        elif mc:
+            mc_str = f"${mc/1e6:.0f}M"
+        else:
+            mc_str = "N/A"
+
+        # --- Financials ---
+        financials = stats.get("financials", {})
+        profit_margin = _safe_float(financials.get("profit_margin"))
+        income = financials.get("income_statement", {})
+        eps = _safe_float(income.get("diluted_eps_ttm"))
+        revenue_growth = _safe_float(income.get("quarterly_revenue_growth"))
+
+        # --- 52-week price summary ---
+        price_summary = stats.get("stock_price_summary", {})
+        fifty_two_wk_high = _safe_float(price_summary.get("fifty_two_week_high"))
+        fifty_two_wk_low = _safe_float(price_summary.get("fifty_two_week_low"))
+
+        return Fundamentals(
+            pe_ratio=pe_ratio,
+            eps=eps,
+            market_cap=mc_str,
+            profit_margin=profit_margin,
+            revenue_growth=revenue_growth,
+            fifty_two_week_high=fifty_two_wk_high,
+            fifty_two_week_low=fifty_two_wk_low,
+        )
+    except Exception as exc:
+        logger.warning(f"TwelveData fundamentals failed for {ticker}: {exc} — returning empty")
+        return Fundamentals()
+
+
+def _safe_float(value) -> Optional[float]:
+    """Safely convert a value to float, returning None on failure."""
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+# ===================================================================
 # GET /fundamentals/{ticker}
 # ===================================================================
 @app.get("/fundamentals/{ticker}", response_model=Fundamentals)
 def get_fundamentals(ticker: str):
-    """Return live fundamentals from yfinance."""
+    """Return live fundamentals from TwelveData statistics endpoint."""
     ticker = ticker.upper().strip()
     if not re.match(r"^[A-Z]{1,5}$", ticker):
         raise HTTPException(status_code=400, detail="Ticker must be 1-5 uppercase letters")
 
-    try:
-        stock = yf.Ticker(ticker)
-        info = stock.info
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Failed to fetch data: {str(e)}")
-
-    if not info or info.get("regularMarketPrice") is None:
-        raise HTTPException(status_code=404, detail=f"Ticker '{ticker}' not found")
-
-    mc = info.get("marketCap", 0)
-    if mc and mc >= 1e12:
-        mc_str = f"${mc/1e12:.2f}T"
-    elif mc and mc >= 1e9:
-        mc_str = f"${mc/1e9:.2f}B"
-    elif mc:
-        mc_str = f"${mc/1e6:.0f}M"
-    else:
-        mc_str = "N/A"
-
-    return Fundamentals(
-        pe_ratio=info.get("trailingPE"),
-        eps=info.get("trailingEps"),
-        market_cap=mc_str,
-        profit_margin=info.get("profitMargins"),
-        revenue_growth=info.get("revenueGrowth"),
-        fifty_two_week_high=info.get("fiftyTwoWeekHigh"),
-        fifty_two_week_low=info.get("fiftyTwoWeekLow"),
-    )
+    return _fetch_fundamentals(ticker)
 
 
 # ===================================================================

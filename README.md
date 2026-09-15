@@ -1,6 +1,6 @@
 # 📈 TradeVision AI — End-to-End Machine Learning System for Stock Analysis
 
-> A production-grade ML system that fetches daily stock data, engineers technical & sentiment features, trains direction-prediction models, serves predictions via FastAPI, and monitors for data/concept drift — all orchestrated through a single config file.
+> A production-grade ML pipeline that fetches daily stock data, engineers technical features, trains direction-prediction models, serves predictions via FastAPI, and monitors for data/concept drift — all orchestrated through a single config file.
 
 <p align="center">
   <img src="screenshots/dashboard_overview.png" alt="TradeVision AI Dashboard" width="900">
@@ -14,7 +14,7 @@
 | Stage | Input | Output |
 |---|---|---|
 | **Data Ingestion** | Ticker symbol + date range | Versioned raw OHLCV parquet |
-| **Feature Store** | Raw OHLCV parquet | Feature parquet (RSI, MACD, Bollinger, sentiment, lags) |
+| **Feature Store** | Raw OHLCV parquet | Feature parquet (RSI, MACD, Bollinger, volatility, volume ratio, lag returns) |
 | **Model Training** | Feature parquet | Trained models (RF, XGBoost, LR, Isolation Forest) |
 | **Prediction API** | Ticker symbol | JSON with signals, sentiment, anomaly flag, direction |
 | **Monitoring** | Prediction logs | Drift reports, rolling accuracy, retrain triggers |
@@ -132,27 +132,48 @@ curl -X POST http://localhost:8000/analyze \
 
 ## 🧪 Models & Evaluation
 
-<p align="center">
-  <img src="screenshots/model_predictions.png" alt="Model Predictions" width="800">
-</p>
+### Model Comparison (leak-free, time-ordered 80/20 split)
 
+| Model | Accuracy | F1 | DOWN Recall | UP Recall | Notes |
+|---|---|---|---|---|---|
+| **Naive Baseline** (always UP) | 54.2% | 0.70\* | 0.00 | 1.00 | \*F1 only on UP class; zero DOWN coverage |
+| **Random Forest** | 50.6% | 0.46 | — | — | Evaluated |
+| **Logistic Regression** | 48.9% | 0.33 | — | — | Evaluated |
+| **XGBoost** | **51.1%** | **0.51** | **0.61** | 0.43 | ✅ Selected |
+| **Isolation Forest** | N/A | N/A | N/A | N/A | Anomaly detection |
 
-| Model | Task | Training Accuracy | F1 Score | Status |
-|---|---|---|---|---|
-| **Naive Baseline** | Always predict UP | 51.01% | 0.6756 | Reference |
-| **Random Forest** | Direction Prediction | 68.20% | 0.6950 | ✅ PASS |
-| **XGBoost** | Direction Prediction | 72.40% | 0.7410 | ✅ BEST |
-| **Logistic Regression**| Direction Prediction | 54.10% | 0.6810 | ✅ PASS |
-| **Isolation Forest** | Anomaly Detection | N/A | N/A | ACTIVE |
+> **Note on the split:** `train_test_split(..., shuffle=False)` with an explicit `sort_index()` before the split ensures every training row has a date strictly before every test row. No lookahead leakage.
 
-### Baseline
-A naive "always predict UP" model achieves **51.01%** accuracy on our current dataset. All classifiers successfully beat this baseline on F1 score, with **XGBoost** being the clear winner.
+### Why XGBoost? Why not the baseline?
 
-### Tradeoff Analysis
-For this project, **XGBoost** outperformed Random Forest and Logistic Regression. 
-- **Why XGBoost won:** It captured non-linear relationships and momentum shifts more effectively through its gradient boosting architecture, particularly handling the noise in volume indicators better than the bagging approach of Random Forest.
-- **Tradeoffs:** XGBoost has slightly higher inference latency (~0.05ms more) than Logistic Regression and is more sensitive to hyperparameter tuning.
-- **Improvements:** With more time, I would implement **recursive feature elimination** to reduce the current 23 features to the most impactful 10, and add **cross-validation** over multiple time-folds to ensure stability across market regimes.
+Blended accuracy (51%) is near-chance and *loses* to the naive "always UP" baseline on accuracy and F1 — this is consistent with the Efficient Market Hypothesis on daily OHLCV data. The naive baseline wins on those metrics by **never predicting a DOWN day at all.**
+
+The more informative comparison is per-class:
+
+```
+XGBoost confusion matrix (held-out test set, 743 days):
+
+              Predicted DOWN   Predicted UP
+  Actual DOWN:      206             134     ← 61% recall on DOWN days
+  Actual UP:        229             174     ← 43% recall on UP days
+
+Naive baseline:
+  Actual DOWN:        0             340     ← 0% recall on DOWN days
+  Actual UP:          0             403     ← 100% recall on UP days
+```
+
+XGBoost catches **61% of down days** (vs 0% for the baseline). Whether that asymmetry is economically exploitable depends on the cost function — if missing a down day is more expensive than missing an up day, the model adds value. If you only care about raw accuracy, the baseline wins.
+
+### The real story: the pipeline, not the alpha
+
+The strong outcome here isn't a model that predicts stock direction (that's hard and the numbers reflect it). It's the **engineering rigor**:
+
+- Leak-free feature pipeline with explicit chronological splitting and a documented audit trail
+- Three models evaluated and compared systematically against a meaningful baseline
+- Confusion matrix analysis surfacing the DOWN-day asymmetry that blended accuracy hides
+- Drift detection, rolling accuracy monitoring, and retrain triggers built in from day one
+
+Building a system that correctly diagnoses that daily-direction alpha on raw OHLCV+indicators sits near the efficient-market baseline *is* the result.
 
 ---
 
