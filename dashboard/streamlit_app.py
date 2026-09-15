@@ -202,17 +202,52 @@ def sidebar():
 def fetch_live_data(ticker: str, period: str):
     if not ticker:
         return None, None, None
+        
+    df = None
+    info = {}
+    news = []
+    
+    # 1. Fetch live quotes/chart data via Twelve Data (highly reliable)
+    api_key = os.environ.get("TWELVEDATA_API_KEY", "")
+    if api_key:
+        try:
+            from twelvedata import TDClient
+            td = TDClient(apikey=api_key)
+            # Map Streamlit period to trading days (roughly)
+            sizes = {"6mo": 130, "1y": 252, "2y": 504, "5y": 1260}
+            size = sizes.get(period, 252)
+            
+            ts = td.time_series(
+                symbol=ticker, 
+                interval="1day", 
+                outputsize=size, 
+                timezone="America/New_York"
+            )
+            td_df = ts.as_pandas()
+            if td_df is not None and not td_df.empty:
+                td_df.index.name = "Date"
+                td_df.index = pd.to_datetime(td_df.index)
+                td_df = td_df.sort_index(ascending=True)
+                col_map = {"open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"}
+                df = td_df.rename(columns={k: v for k, v in col_map.items() if k in td_df.columns})
+        except Exception:
+            pass
+            
+    # 2. Fetch Fundamentals & News via yfinance (and fallback for quotes if TD failed)
     try:
         stock = yf.Ticker(ticker)
-        df = stock.history(period=period)
+        if df is None:
+            df_yf = stock.history(period=period)
+            if df_yf is not None and not df_yf.empty:
+                df = df_yf
+                
         info = stock.info if hasattr(stock, 'info') else {}
         news = stock.news if hasattr(stock, "news") else []
-        if df is not None and not df.empty:
-            return df, info, news
-        return None, info, news
     except Exception:
-        # Yahoo Finance often blocks cloud server IPs — this is expected
-        return None, {}, []
+        # Expected to fail on cloud due to Yahoo scraping blocks
+        pass
+        
+    return df, info, news
 
 
 # ===================================================================
@@ -895,8 +930,7 @@ def main():
             st.plotly_chart(fig, use_container_width=True)
         else:
             # Fallback: use pre-computed feature data for metrics
-            st.warning("⚠️ Live market data unavailable (Yahoo Finance blocks cloud servers). "
-                       "Showing analysis from pre-computed data.")
+            st.info("ℹ️ **Live quotes unavailable in this environment — showing ML predictions from cached historical data.**")
             df_feat = get_feature_data(ticker, config)
             if df_feat is not None and "Close" in df_feat.columns:
                 latest_close = df_feat["Close"].iloc[-1]
@@ -930,7 +964,7 @@ def main():
             if info:
                 fundamentals_panel(info)
             else:
-                st.info("📊 Fundamentals unavailable — Yahoo Finance data blocked on cloud servers.")
+                st.info("ℹ️ **Fundamentals unavailable.** Live financial data access is restricted in this deployment.")
 
         with tab3:
             anomaly_panel(ticker, config, models)
@@ -939,7 +973,7 @@ def main():
             if news:
                 sentiment_panel(news)
             else:
-                st.info("📰 Live news unavailable on cloud deployment. Sentiment uses pre-computed scores.")
+                st.info("ℹ️ **Sentiment analysis requires live news access, unavailable in this deployment.**")
 
         with tab5:
             monitoring_panel(ticker)
